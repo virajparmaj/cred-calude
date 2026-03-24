@@ -13,17 +13,20 @@ No database exists. All persistence uses local files and in-memory state.
 
 | Store | Path | Format | Purpose |
 |---|---|---|---|
-| Config | `~/.credclaude/config.json` | JSON | User settings: `billing_day`, `daily_budget_usd`, `warn_at_pct`, `notifications_enabled` (`monitor.py:55-60`, `monitor.py:105-108`) |
-| Reset notification lock | `~/.credclaude/.last_reset_notif` | Plain text (ISO date) | Prevents duplicate billing-reset notifications per day (`monitor.py:363-371`, `monitor.py:548-553`) |
-| Budget warning locks | `~/.credclaude/.warn_{YYYY-MM-DD}` | Plain text (ISO date) | One file per day, prevents duplicate budget warnings (`monitor.py:560-566`) |
-| Stdout log | `~/.credclaude/monitor.log` | Plain text | Captured by launchd (`install.sh:54-55`) |
-| Stderr log | `~/.credclaude/monitor.err` | Plain text | Captured by launchd (`install.sh:57-58`) |
-| File cache | In-memory `self._file_cache` dict | `{filepath: (file_size, CostData)}` | Avoids re-parsing unchanged JSONL files within the same day (`monitor.py:193-209`, `monitor.py:459-463`) |
+| Config | `~/.credclaude/config.json` | JSON | User settings: `billing_day`, `daily_budget_usd`, `warn_at_pct`, `notifications_enabled`, `plan_tier` (`credclaude/config.py`) |
+| Pricing table | `~/.credclaude/pricing.json` | JSON | Per-model token rates with `updated_at` field; shipped from `default_pricing.json` on first run (`credclaude/config.py`) |
+| Usage snapshot | `~/.credclaude/snapshot.json` | JSON | Last successful OAuth API response; persists utilization across app restarts (`credclaude/limit_providers.py`) |
+| Reset notification lock | `~/.credclaude/.last_reset_notif` | Plain text (ISO date) | Prevents duplicate billing-reset notifications per day (`credclaude/notifications.py`) |
+| Budget warning locks | `~/.credclaude/.warn_{YYYY-MM-DD}` | Plain text (ISO date) | One file per day; auto-cleaned on startup if >7 days old (`credclaude/notifications.py`) |
+| PID lock | `~/.credclaude/monitor.pid` | Plain text (PID) | Atomic single-instance guard via `fcntl.flock` (`credclaude/__main__.py`) |
+| App log | `~/.credclaude/monitor.log` | Rotating plain text | Written by Python `RotatingFileHandler`; max 1MB × 3 files (`credclaude/config.py`) |
+| File cache | In-memory dict | `{filepath: (file_size, CostData)}` | Avoids re-parsing unchanged JSONL files (`credclaude/ingestion.py`) |
 
 ### Data source (read-only)
 
-- Claude session logs at `~/.claude/projects/*/*.jsonl` and `~/.claude/projects/*/*/subagents/*.jsonl` (`monitor.py:161-170`).
+- Claude session logs at `~/.claude/projects/*/*.jsonl` and subagent logs (`credclaude/ingestion.py`).
 - These files are written by Claude Code, not by this app. The monitor only reads them.
+- OAuth API at `https://api.anthropic.com/api/oauth/usage` (read-only, authenticated via Keychain token).
 
 ### When this would change
 

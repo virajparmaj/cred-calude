@@ -139,15 +139,21 @@ class OfficialLimitProvider(LimitProvider):
     Uses the same data source as the claude.ai "Plan usage limits" page.
     Token is read from macOS Keychain (set by Claude Code on login).
 
-    Polls every 60 seconds. On any failure (429, network, etc.), silently
-    returns last known data as HEALTHY — no backoff, no stale markers.
+    Polls every 60 seconds. On failures, returns last known data when
+    available and applies a short local cooldown/backoff to avoid repeated
+    failing requests and noisy logs.
     """
 
     CACHE_TTL_SEC = 55  # Just under 60s poll interval
+    TOKEN_EXPIRED_COOLDOWN_SEC = 300
+    RATE_LIMIT_BACKOFF_STEPS_SEC = (120, 300, 600)
 
     def __init__(self) -> None:
         self._cached: LimitInfo | None = None
         self._cache_time: datetime.datetime | None = None
+        self._retry_after: datetime.datetime | None = None
+        self._retry_reason: str | None = None
+        self._rate_limit_step = 0
 
     # ------------------------------------------------------------------
     # Token extraction
@@ -209,6 +215,24 @@ class OfficialLimitProvider(LimitProvider):
         age = (_now() - self._cache_time).total_seconds()
         return age < self.CACHE_TTL_SEC
 
+    def _retry_guard_active(self) -> bool:
+        if self._retry_after is None:
+            return False
+        if self._retry_after <= _now():
+            self._retry_after = None
+            self._retry_reason = None
+            return False
+        return True
+
+    def _set_retry_guard(self, seconds: int, reason: str) -> None:
+        self._retry_after = _now() + datetime.timedelta(seconds=seconds)
+        self._retry_reason = reason
+
+    def _clear_retry_guard(self) -> None:
+        self._retry_after = None
+        self._retry_reason = None
+        self._rate_limit_step = 0
+
     # ------------------------------------------------------------------
     # Public interface
     # ------------------------------------------------------------------
@@ -265,6 +289,8 @@ class OfficialLimitProvider(LimitProvider):
         """Clear cache and re-fetch."""
         self._cache_time = None
         self._cached = None
+        self._retry_after = None
+        self._retry_reason = None
         logger.info("Force refresh: cleared cache")
         return self.get_limit_info()
 
@@ -272,6 +298,14 @@ class OfficialLimitProvider(LimitProvider):
         # Return cached data if still fresh
         if self._cache_valid() and self._cached is not None:
             return self._cached
+
+        if self._retry_guard_active():
+            retry_remaining = int((self._retry_after - _now()).total_seconds())
+            logger.debug(
+                "Retry guard active (%ds remaining) — using last known data",
+                max(0, retry_remaining),
+            )
+            return self._fallback(self._retry_reason or "Temporarily unavailable")
 
         try:
             token = self._get_token()
@@ -306,16 +340,30 @@ class OfficialLimitProvider(LimitProvider):
 
             self._cached = info
             self._cache_time = now
+            self._clear_retry_guard()
             _save_snapshot(info)
             logger.info("OAuth usage fetched: %.1f%% used", info.utilization_pct)
             return info
 
         except _RateLimitError:
-            logger.debug("429 rate limited — using last known data")
+            backoff_sec = self.RATE_LIMIT_BACKOFF_STEPS_SEC[
+                min(self._rate_limit_step, len(self.RATE_LIMIT_BACKOFF_STEPS_SEC) - 1)
+            ]
+            self._rate_limit_step = min(
+                self._rate_limit_step + 1,
+                len(self.RATE_LIMIT_BACKOFF_STEPS_SEC) - 1,
+            )
+            logger.info("429 rate limited — backing off for %ds", backoff_sec)
+            self._set_retry_guard(backoff_sec, "Rate limited")
             return self._fallback("Rate limited")
 
         except _TokenExpiredError as e:
             logger.info("OAuth token expired: %s", e)
+            self._rate_limit_step = 0
+            self._set_retry_guard(
+                self.TOKEN_EXPIRED_COOLDOWN_SEC,
+                "Token expired — run: claude auth login",
+            )
             return self._fallback("Token expired — run: claude auth login")
 
         except Exception as e:

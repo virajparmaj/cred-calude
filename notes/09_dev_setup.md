@@ -4,37 +4,50 @@
 Provide practical setup/run instructions for contributors.
 
 ## Status
-- [Confirmed from code] Setup is lightweight and script-driven.
-- [Strongly inferred] macOS is required for full runtime behavior.
+- [Confirmed from code] Setup is script-driven with proper Python packaging.
+- [Strongly inferred] macOS is required for full runtime behavior (Keychain, osascript, launchd).
 
 ## Confirmed from code
-- Dependency: `rumps>=0.4.0` (`requirements.txt:1`).
-- Install script creates `venv/`, installs deps, and registers launchd agent (`install.sh:17-69`).
-- Uninstall script unloads/removes launch agent (`uninstall.sh:9-17`).
-- Local app files live in `~/.credclaude` (`monitor.py:22-23`, `install.sh:8`).
-- No `.env` file usage or environment variable parsing in application code.
+- **Dependencies**: `rumps>=0.4.0` + `pyobjc-framework-Cocoa` (`pyproject.toml` / `requirements.txt`).
+- **Packaging**: `pyproject.toml` (metadata, dynamic version from `credclaude/__init__.py`). `setup.py` is a minimal shim.
+- **Entry point**: `python -m credclaude` (via `credclaude/__main__.py`).
+- **Install script**: `install.sh` — creates venv, `pip install -e .`, builds `.app` via `build_app.sh`, copies to `~/Applications`, registers launchd.
+- **Uninstall script**: `uninstall.sh` — unloads/removes launch agent plist, optionally removes `.app`.
+- **Tests**: `tests/` directory with 5 test modules (~200 test cases) covering billing, config, cost_engine, ingestion, limit_providers. Run with `pytest`.
+- Local data at `~/.credclaude/`. Claude logs expected at `~/.claude/projects/`.
 
-## Inferred / proposed
-- [Strongly inferred] Python 3.14 was used in current local dev venv (`venv/pyvenv.cfg`), but project does not pin a strict Python minor version.
-- [Strongly inferred] Recommended contributor baseline: Python 3.11+ on macOS.
-- [Not found in repository] No test runner, formatter, or lint config committed.
+## Dev run commands
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -e .
+
+# Run directly (no .app bundle needed for dev)
+python -m credclaude
+
+# Run tests
+pytest tests/ -v
+
+# Build + install as .app
+bash install.sh
+
+# Remove login item
+bash uninstall.sh
+```
 
 ## Important details
-- Local run commands:
-  - `python3 -m venv venv`
-  - `source venv/bin/activate`
-  - `pip install -r requirements.txt`
-  - `python monitor.py`
-- Install as login item: `bash install.sh`
-- Remove login item: `bash uninstall.sh`
-- Runtime assumptions: existing Claude logs under `~/.claude/projects`.
+- Python 3.11+ required (3.14 used in current dev venv). No strict minor version pinned.
+- `build_app.sh` reads version from `credclaude/__init__.py` — single source of truth.
+- `build_app.sh` builds `dist/CredClaude.app` using a shell launcher script wrapping `python -m credclaude`. Includes icon built from `claude_monitor_logo.png`.
+- App logs go to `~/.credclaude/monitor.log` (RotatingFileHandler, not captured by launchd).
+- No `.env` or environment variable parsing in application code.
 
 ## Open issues / gaps
-- Script does not verify required macOS tools (`launchctl`, `osascript`) before install.
+- No formatter or lint config committed (`black`, `isort`, `mypy` not configured in `pyproject.toml`).
+- Script does not verify required macOS tools (`launchctl`, `osascript`, `sips`, `iconutil`) before install.
 - No README with contributor workflow and troubleshooting.
-- Uninstall message references a different folder path than current repo location (`uninstall.sh:19`).
 
 ## Recommended next steps
-- Add a README with quickstart, troubleshooting, and upgrade notes.
-- Add basic preflight checks in install script for macOS dependencies.
-- Add minimal test and lint commands for repeatable contributions.
+- Add `black`/`isort`/`mypy` config to `pyproject.toml`.
+- Add preflight checks in `install.sh` for required macOS tools.
+- Add README with quickstart, troubleshooting, and upgrade notes.

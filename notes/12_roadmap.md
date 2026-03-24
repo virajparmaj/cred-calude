@@ -1,48 +1,51 @@
 # 12 Roadmap
 
 ## Purpose
-Define a practical, repo-specific hardening roadmap for this local macOS app.
+Define a practical, repo-specific roadmap for continued improvement of this local macOS app.
 
 ## Status
-- [Strongly inferred] The best path is incremental hardening, not architecture replacement.
+- [Confirmed from code] v1.0.0 shipped: full package refactor, OAuth API integration, tests, `.app` bundle, externalized pricing, settings UI complete.
+- [Strongly inferred] Next phase is polish and observability, not architecture replacement.
 
-## Confirmed from code
-- Core app loop, settings flow, notifications, and launchd deployment are already in place (`monitor.py`, `install.sh`, `uninstall.sh`).
+## Completed (shipped in v1.0.0 refactor)
+- `credclaude/` package structure replacing single `monitor.py`
+- OAuth API integration for live 5-hour session utilization
+- Graceful degradation: OAuth → stale cache → snapshot → estimator → offline
+- Externalized pricing (`~/.credclaude/pricing.json`) with staleness check
+- Notifications toggle in settings UI
+- Atomic PID lock (`fcntl.flock`)
+- Structured logging with `RotatingFileHandler`
+- Type-validated config loading
+- 5 test modules (~200 test cases) covering all core modules
+- `.app` bundle build via `build_app.sh`
+- `install.sh` builds, copies, and registers launchd login item
+- Version single-sourced from `credclaude/__init__.py`
+- Warn lock file cleanup on startup
 
-## Inferred / proposed
-### Immediate fixes (next 1-2 iterations)
-- [Strongly inferred] Add visible diagnostics: scanned files, skipped records, last successful scan.
-- [Strongly inferred] Add settings toggle for `notifications_enabled`.
-- [Strongly inferred] Fix uninstall output path text mismatch.
-- [Strongly inferred] Remove dead constants and tighten exception handling paths.
+## Near-term improvements
+- Add "Open logs folder" menu item for easier support
+- Add version/about entry in menu (`v1.0.0`)
+- Add "Data health" status: scanned files, skipped entries, last scan time
+- Document `launchctl list com.veer.credclaude` as healthcheck in README
+- Add `black`/`isort`/`mypy` config to `pyproject.toml`
+- Add preflight checks in `install.sh` (verify `osascript`, `sips`, `iconutil`)
 
-### Short-term improvements
-- [Strongly inferred] Add unit tests for:
-  - timestamp parsing and timezone conversion,
-  - cost computation,
-  - billing period/reset boundaries,
-  - settings validation behavior.
-- [Strongly inferred] Add lightweight README for setup/use/troubleshooting.
-- [Strongly inferred] Add optional CSV export for daily/billing summaries.
+## Medium-term improvements
+- Add 7-day or billing-period spend history (in-memory or lightweight file store)
+- Optional CSV export of daily/billing summaries
+- Pricing auto-update workflow (or link to update instructions)
+- Per-project cost breakdown option
 
-### Medium-term improvements
-- [Strongly inferred] Externalize pricing data to a versioned local config file with update date.
-- [Strongly inferred] Add richer detail window for historical trends and per-model drilldown.
-- [Strongly inferred] Improve performance for period scans on large datasets.
-
-### Long-term enhancements
-- [Strongly inferred] Package as signed/notarized macOS app with clearer release channel.
-- [Strongly inferred] Add safe auto-update workflow.
-- [Not found in repository] Cross-platform support only if product direction changes.
+## Long-term / if scope changes
+- Signed/notarized macOS app bundle for broader distribution
+- Auto-update workflow (e.g., Sparkle framework or GitHub release check)
+- Cross-platform support only if product direction changes
+- Historical trend window with charting
 
 ## Important details
-- Keep local-first architecture unless user requirements change.
-- Preserve zero-cloud dependency for privacy and simplicity.
+- Keep local-first architecture; no cloud dependencies unless explicitly requested.
+- Pricing freshness strategy should avoid requiring code changes for routine rate updates.
 
 ## Open issues / gaps
-- No explicit acceptance criteria exist for "production ready" hardening.
-- No release governance process is documented.
-
-## Recommended next steps
-- Define a v1.0 hardening checklist with measurable pass/fail criteria.
-- Implement immediate fixes before adding new feature surface.
+- No formal v1.x acceptance criteria or release checklist documented.
+- No CHANGELOG or release notes file.

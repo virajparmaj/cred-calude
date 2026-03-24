@@ -4,37 +4,50 @@
 Document data contracts and integration boundaries used by the app.
 
 ## Status
-- [Confirmed from code] No network API exists; all contracts are local file and function contracts.
-- [Not found in repository] No backend endpoints to document.
+- [Confirmed from code] One external HTTP API (OAuth usage endpoint). All other contracts are local file and function contracts.
 
-## Confirmed from code
-- Input contract (session line): JSON object with `type == "assistant"`, `timestamp`, and `message.usage` + `message.model` (`monitor.py:222-229`).
-- Usage keys expected: `input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens` (`monitor.py:128-131`).
-- Date parsing contract: ISO8601 timestamp, with `Z` normalized to UTC offset (`monitor.py:148-153`).
-- Cost computation contract: per-million-token rate map by model family, fallback family `sonnet` (`monitor.py:115-127`, `monitor.py:133-145`).
-- Config contract at `~/.credclaude/config.json`:
-  - `billing_day` (1-28)
-  - `daily_budget_usd` (>0)
-  - `warn_at_pct` (1-100)
+## External API: OAuth Usage Endpoint
+
+- **URL**: `https://api.anthropic.com/api/oauth/usage`
+- **Method**: GET
+- **Auth**: Bearer token from macOS Keychain (`Claude Code-credentials`)
+- **Beta header**: `anthropic-beta: oauth-2025-04-20`
+- **Response fields used**:
+  - `utilization` — float, fraction format (0.0–1.0); normalized to 0–100% by `_normalize_utilization()`
+  - `resets_at` — ISO8601 timestamp for next 5-hour window reset
+- **Error handling**:
+  - HTTP 401 → token expired; 5-min cooldown, menu shows "(stale)" + `"Token expired — run: claude auth login"`
+  - HTTP 429 → rate limited; exponential backoff `[120, 300, 600]`s; last known data shown during backoff
+  - Network error → falls back to disk snapshot → estimator
+- **Rate**: 60s poll interval (60 calls/hour). Startup call deferred 5s to avoid hammering on iterative installs.
+
+## Local File Contracts
+
+- **JSONL session line**: JSON object with `type == "assistant"`, `timestamp` (ISO8601), `message.usage`, `message.model`.
+  - Usage keys: `input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens` (`credclaude/ingestion.py`).
+- **Config** (`~/.credclaude/config.json`):
+  - `billing_day` (int, 1–28)
+  - `daily_budget_usd` (float, >0)
+  - `warn_at_pct` (int/float, 1–100)
   - `notifications_enabled` (bool)
-  (`monitor.py:55-60`, `monitor.py:580-627`)
+  - `plan_tier` (str: `"pro"` | `"max_5x"` | `"max_20x"`)
+  - Type-validated on load; invalid fields reset to defaults (`credclaude/config.py`).
+- **Pricing** (`~/.credclaude/pricing.json`): model-family rate map with `updated_at` field; staleness-checked at startup.
+- **Snapshot** (`~/.credclaude/snapshot.json`): last successful `LimitInfo` serialized to JSON.
 
 ## Inferred / proposed
-- [Strongly inferred] Timeout/loading expectation: menu refresh every 300s, notification checks every 1800s (`monitor.py:28-29`).
-- [Strongly inferred] Error behavior: malformed lines and parsing failures are skipped silently.
-- [Not found in repository] No HTTP status codes, request auth, rate-limits, or retry policies because there is no remote API.
+- [Strongly inferred] Refresh interval (60s) and backoff steps are tunable via constants in `credclaude/config.py` and `credclaude/limit_providers.py`.
 
 ## Important details
-- Contract strictness is low: missing fields are treated as non-fatal and ignored.
-- Notification side effect contract is one-off per day via lock files (`monitor.py:363-371`, `monitor.py:546-567`).
-- Current API surface is internal Python functions, not service interfaces.
+- JSONL contract strictness is low: missing fields are non-fatal and skipped with `logger.debug()`.
+- Notification dedup contract: one lock file per day per notification type.
+- `_normalize_utilization`: value ≤ 1.0 → multiply by 100; value > 1.0 → pass through (future-proofing). Edge case: 1.0 = 100%, not 1%.
 
 ## Open issues / gaps
-- Contract validation is implicit; no schema validation layer.
-- No user-facing indication when many records are skipped.
+- No schema validation layer on JSONL; malformed records are skipped silently (but logged at debug level).
+- No user-visible count of skipped records.
 - No backward-compatibility versioning for potential future log format changes.
 
 ## Recommended next steps
-- Add optional strict mode with schema checks and warning counters.
-- Emit "last successful scan" and "records skipped" diagnostics in UI/logs.
-- If future remote service is introduced, define explicit JSON schema/versioning from day one.
+- Emit "records skipped" count in UI or structured log.
+- If the OAuth API adds new fields, add them to `LimitInfo` and the snapshot schema.

@@ -221,7 +221,7 @@ class TestOfficialLimitProvider:
         assert info.error is not None
 
     def test_429_returns_cached_as_healthy(self):
-        """HTTP 429 → returns cached data as HEALTHY (no backoff)."""
+        """HTTP 429 → returns cached data as HEALTHY and starts local backoff."""
         import urllib.error
         provider = OfficialLimitProvider()
         body = _make_api_response(utilization=0.5)
@@ -246,7 +246,8 @@ class TestOfficialLimitProvider:
                 info = provider.get_limit_info()
 
         assert info.utilization_pct == pytest.approx(50.0)
-        assert info.state == ProviderState.HEALTHY  # No stale/degraded
+        assert info.state == ProviderState.HEALTHY
+        assert provider._retry_after is not None
 
     def test_successful_fetch_after_failure(self):
         """After a failure, next successful fetch works normally."""
@@ -294,6 +295,35 @@ class TestOfficialLimitProvider:
         # Should return cached data as HEALTHY
         assert info.utilization_pct == pytest.approx(50.0)
         assert info.state == ProviderState.HEALTHY
+
+    def test_rate_limit_backoff_skips_repeat_fetches(self):
+        """Repeated calls during local 429 backoff should not hit Keychain/API."""
+        import urllib.error
+
+        provider = OfficialLimitProvider()
+
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_proc.stdout = _make_keychain_output()
+
+        def raise_429(*args, **kwargs):
+            raise urllib.error.HTTPError(
+                url=_OAUTH_URL, code=429, msg="Rate Limited",
+                hdrs=None, fp=None,
+            )
+
+        with patch("credclaude.limit_providers._load_snapshot", return_value=None):
+            with patch("subprocess.run", return_value=mock_proc) as proc_mock:
+                with patch("urllib.request.urlopen", side_effect=raise_429) as url_mock:
+                    first = provider.get_limit_info()
+                    second = provider.get_limit_info()
+
+        assert first.error == "Rate limited"
+        assert second.error == "Rate limited"
+        assert first.state == ProviderState.OFFLINE
+        assert second.state == ProviderState.OFFLINE
+        assert proc_mock.call_count == 1
+        assert url_mock.call_count == 1
 
 
 # ---------------------------------------------------------------------------
@@ -478,6 +508,40 @@ class TestTokenExpired:
         assert info.utilization_pct == pytest.approx(55.0)
         assert info.state == ProviderState.HEALTHY
         assert "claude auth login" in info.error
+
+    def test_token_expiry_cooldown_skips_repeat_fetches(self, tmp_path):
+        """Repeated calls during token-expiry cooldown should not hit Keychain/API."""
+        import urllib.error
+
+        provider = OfficialLimitProvider()
+
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_proc.stdout = _make_keychain_output()
+
+        def raise_401(*args, **kwargs):
+            err = urllib.error.HTTPError(
+                url=_OAUTH_URL, code=401, msg="Unauthorized",
+                hdrs=None, fp=MagicMock(),
+            )
+            err.read = lambda: json.dumps({
+                "error": {"message": "OAuth token has expired."}
+            }).encode()
+            raise err
+
+        snapshot_path = tmp_path / "nonexistent.json"
+        with patch("credclaude.limit_providers.SNAPSHOT_PATH", snapshot_path):
+            with patch("subprocess.run", return_value=mock_proc) as proc_mock:
+                with patch("urllib.request.urlopen", side_effect=raise_401) as url_mock:
+                    first = provider.get_limit_info()
+                    second = provider.get_limit_info()
+
+        assert "claude auth login" in first.error
+        assert "claude auth login" in second.error
+        assert first.state == ProviderState.OFFLINE
+        assert second.state == ProviderState.OFFLINE
+        assert proc_mock.call_count == 1
+        assert url_mock.call_count == 1
 
 
 # ---------------------------------------------------------------------------

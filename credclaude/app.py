@@ -158,6 +158,9 @@ class CredClaude(rumps.App):
 
     def _do_update(self) -> None:
         limit = self._provider.get_limit_info()
+        self._apply_limit(limit)
+
+    def _apply_limit(self, limit) -> None:
         pct = limit.utilization_pct
         resets_at = limit.resets_at
 
@@ -245,6 +248,10 @@ class CredClaude(rumps.App):
     def _refresh_now(self, _sender) -> None:
         self.config = load_config()
         self._provider.update_config(self.config)
+        if _sender is not None:
+            limit = self._provider.force_refresh()
+            self._apply_limit(limit)
+            return
         self._update()
 
     def _show_settings(self, _sender) -> None:

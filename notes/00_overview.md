@@ -4,35 +4,34 @@
 Document what this repository currently is, who it serves, and how close it is to the intended production level.
 
 ## Status
-- [Confirmed from code] Functional local macOS menu bar utility with install/uninstall scripts.
-- [Strongly inferred] Mature MVP for personal use, not yet hardened for broad distribution.
+- [Confirmed from code] Functional local macOS menu bar utility at v1.0.0 (`credclaude/__init__.py`).
+- [Confirmed from code] Fully refactored from single `monitor.py` into `credclaude/` Python package with tests, packaging, and a built `.app` bundle.
 
 ## Confirmed from code
-- The app is a Python `rumps` menu bar app that tracks Claude usage cost from local JSONL session files (`monitor.py:1-5`, `monitor.py:378-411`).
-- It scans `~/.claude/projects/**.jsonl` and subagent logs, computes token-based USD cost, and shows daily plus billing-period totals (`monitor.py:21-24`, `monitor.py:161-273`, `monitor.py:469-527`).
-- It includes first-run setup for billing reset day and daily budget (`monitor.py:417-453`).
-- It shows macOS notifications for billing reset day and budget threshold (`monitor.py:353-371`, `monitor.py:537-567`).
-- Installation uses `launchd` for auto-start at login and writes logs to `~/.credclaude/` (`install.sh:29-75`).
-- Uninstall unloads/removes the launch agent plist (`uninstall.sh:4-17`).
+- The app is a Python `rumps` menu bar app built as a proper package (`credclaude/`) with modules for ingestion, billing, cost computation, notifications, and limit providers.
+- Primary data path: OAuth API (`https://api.anthropic.com/api/oauth/usage`) for live 5-hour session utilization; JSONL file scanning for daily/billing-period USD cost.
+- First-run setup prompts for billing reset day and daily budget (`credclaude/config.py`).
+- macOS notifications for billing reset and budget threshold via `osascript` (`credclaude/notifications.py`).
+- `install.sh` builds a `.app` bundle via `build_app.sh`, copies it to `~/Applications`, and registers a `launchd` login item that runs `open -a CredClaude`.
+- Uninstall unloads/removes the launch agent plist and optionally removes the `.app` (`uninstall.sh`).
 
 ## Inferred / proposed
-- [Strongly inferred] Primary user is an individual Claude Code power user who wants quick budget visibility without opening dashboards.
-- [Strongly inferred] The intended quality bar is a reliable always-on personal observability tool for daily usage control.
+- [Strongly inferred] Primary user is an individual Claude Code power user wanting quick session and budget visibility without opening dashboards.
+- [Strongly inferred] Quality bar: reliable always-on personal observability tool. v1.0.0 is the first fully packaged release.
 - [Not found in repository] No web frontend, backend server, authentication layer, database, or cloud deployment stack.
 
 ## Important details
-- Core journey: install -> app auto-starts -> first-run prompts -> passive monitoring in menu bar -> optional settings updates.
-- Cost model uses hardcoded per-million-token rates for Opus/Sonnet/Haiku and defaults unknown models to Sonnet pricing (`monitor.py:34-53`, `monitor.py:115-127`).
-- Config is persisted locally in `~/.credclaude/config.json` (`monitor.py:22-23`, `monitor.py:88-109`).
+- Core journey: install → `.app` auto-starts via launchd → first-run prompts → passive monitoring in menu bar → OAuth data for session limits + JSONL data for spend → optional settings updates.
+- Cost model uses an externalized `~/.credclaude/pricing.json` (shipped from `default_pricing.json`). Staleness is checked at startup — warns if >30 days old.
+- Config at `~/.credclaude/config.json`. Keys: `billing_day`, `daily_budget_usd`, `warn_at_pct`, `notifications_enabled`, `plan_tier`.
+- Limit data degrades gracefully: OAuth API → stale cache → disk snapshot (`snapshot.json`) → plan-tier estimator → offline state.
 
 ## Open issues / gaps
-- Price table can drift from real provider pricing over time.
-- Error handling is mostly silent (`except Exception: continue/pass`), reducing debuggability.
-- No automated tests or CI checks.
-- Not cross-platform; depends on macOS `launchd` and `osascript`.
+- Not cross-platform; depends on macOS `launchd`, `osascript`, and Keychain.
+- App bundle is tied to source repo path; moving the repo requires re-running `install.sh`.
+- No signed/notarized distribution; Gatekeeper may prompt on first launch.
 
 ## Recommended next steps
-- Add pricing update strategy and explicit versioning for rate tables.
-- Add structured logging and error counters for skipped files/lines.
-- Add unit tests for parsing, cost math, and billing-date boundary logic.
-- Add packaging/release notes for safer upgrades.
+- Add pricing update workflow or auto-fetch from Anthropic's public docs.
+- Consider signed/notarized packaging if distributing beyond personal use.
+- Add `install.sh --check` preflight mode for dependency and launchd validation.

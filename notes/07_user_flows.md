@@ -4,52 +4,65 @@
 Describe real end-user flows and where they are complete or incomplete.
 
 ## Status
-- [Confirmed from code] Main local flows are implemented for setup, monitoring, settings, and notifications.
-- [Strongly inferred] Some maintenance and troubleshooting flows are incomplete.
+- [Confirmed from code] All main flows implemented: install, first-run, monitoring, settings, notifications, re-auth.
 
 ## Confirmed from code
-- Install and startup flow:
+
+- **Install flow**:
   1. Run `bash install.sh`.
-  2. Virtual environment is created and dependency installed.
-  3. Launch agent plist is created and loaded.
-  4. App appears in menu bar.
-  (`install.sh:17-75`)
-- First-run onboarding flow:
-  1. Prompt for billing reset day.
-  2. Prompt for daily budget.
-  3. Save config locally.
-  (`monitor.py:385-389`, `monitor.py:417-453`)
-- Daily monitoring flow:
-  1. App scans session logs.
-  2. Computes daily + period cost.
-  3. Updates menu title/progress/model lines.
-  (`monitor.py:469-527`)
-- Settings update flow:
-  1. Open Settings menu item.
-  2. Update billing day, budget, warn threshold.
-  3. Persist config and refresh display.
-  (`monitor.py:577-631`)
-- Notification flow:
-  1. Every 30 minutes check reset and budget threshold.
-  2. Send macOS notification if conditions met and lock not present.
-  (`monitor.py:537-567`)
+  2. venv created, `credclaude` package installed via `pip install -e .`.
+  3. `.app` bundle built via `build_app.sh`, copied to `~/Applications/CredClaude.app`.
+  4. launchd plist written; `open -a CredClaude` fires immediately.
+  (`install.sh`)
+
+- **First-run onboarding flow**:
+  1. No config found → prompts for billing reset day, daily budget, plan tier.
+  2. Saves config to `~/.credclaude/config.json`.
+  3. Copies `default_pricing.json` to `~/.credclaude/pricing.json`.
+  (`credclaude/app.py`, `credclaude/config.py`)
+
+- **Daily monitoring flow**:
+  1. 5s after start: fetch OAuth utilization + scan JSONL files.
+  2. Every 60s: refresh menu — session %, reset countdown, daily spend, period total, model breakdown.
+  (`credclaude/app.py`, `credclaude/limit_providers.py`, `credclaude/ingestion.py`)
+
+- **Settings update flow**:
+  1. Open Settings menu item → sequential modal dialogs.
+  2. Update billing day, budget, warn threshold, notifications toggle, plan tier.
+  3. Persist config and force immediate refresh.
+  (`credclaude/app.py`)
+
+- **Notification flow**:
+  1. Checked every refresh cycle.
+  2. Budget threshold: send notification once per day via lock file.
+  3. Billing reset: send notification once per reset day.
+  (`credclaude/notifications.py`)
+
+- **Token expiry / re-auth flow**:
+  1. OAuth returns 401 → app enters 5-min cooldown.
+  2. Menu shows last known data marked "(stale)" + `"Token expired — run: claude auth login"`.
+  3. User runs `claude auth login` in terminal, then clicks "Refresh Now".
+  (`credclaude/limit_providers.py`)
+
+- **Rate limit flow**:
+  1. OAuth returns 429 → exponential backoff (120s → 300s → 600s).
+  2. Last known data displayed during backoff; countdown shown in menu.
+  3. "Refresh Now" during backoff clears local state but may escalate backoff tier if server window hasn't reset.
+  (`credclaude/limit_providers.py`)
 
 ## Inferred / proposed
 - [Not found in repository] No signup/login flow (not required for current local architecture).
 - [Not found in repository] No dashboard/profile/admin flow.
-- [Strongly inferred] Troubleshooting flow depends on reading raw log files; no in-app diagnostics screen.
 
 ## Important details
-- "Landing" in this app is effectively the menu bar title state after launch, not a webpage.
-- Core main action is passive monitoring; user interaction is mostly settings and refresh.
-- Save/edit/delete applies to local config edits only; no domain objects are created/deleted.
+- "Landing" is the menu bar title state after launch, not a webpage.
+- Core interaction is passive monitoring; user interaction is mostly settings and occasional refresh.
 
 ## Open issues / gaps
 - No explicit flow for missing log directory (`~/.claude/projects`) or permission problems.
-- No validation feedback if user enters invalid values in settings (input is ignored silently).
-- No guided recovery for corrupted config file.
+- No guided recovery for corrupted config file (falls back to defaults silently).
+- No "Open logs" menu action for easier support/troubleshooting.
 
 ## Recommended next steps
 - Add user-visible status line for "data source found / not found".
-- Add inline validation/error messages in settings dialogs.
-- Add "Open logs" menu action for easier support.
+- Add "Open logs folder" menu action.

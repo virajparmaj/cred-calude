@@ -8,10 +8,10 @@ Describe the actual UI language and interaction style currently used.
 - [Strongly inferred] Visual consistency comes from native macOS controls via `rumps`.
 
 ## Confirmed from code
-- Menu bar icon/title string is dynamically updated (`monitor.py:380`, `monitor.py:488`).
-- Menu is text-driven with separators and action items (`monitor.py:391-406`).
-- Setup/settings use modal text-input windows (`monitor.py:417-453`, `monitor.py:580-627`).
-- Progress visualization is text glyph based (`monitor.py:327-331`, `monitor.py:494`).
+- Menu bar icon/title string is dynamically updated (`credclaude/app.py`).
+- Menu is text-driven with separators and action items (`credclaude/app.py`).
+- Setup/settings use modal text-input windows via `rumps.Window` (`credclaude/app.py`).
+- Progress visualization is text glyph based (block characters, `credclaude/app.py`).
 
 ## Inferred / proposed
 - [Strongly inferred] Visual aesthetic: utilitarian, minimal, native macOS utility style.
