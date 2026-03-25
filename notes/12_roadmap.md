@@ -12,15 +12,17 @@ Define a practical, repo-specific roadmap for continued improvement of this loca
 - OAuth API integration for live 5-hour session utilization
 - Graceful degradation: OAuth → stale cache → snapshot → estimator → offline
 - Externalized pricing (`~/.credclaude/pricing.json`) with staleness check
+- Native macOS settings window (`credclaude/settings.py`) via AppKit/objc — replaces sequential rumps dialog chain
 - Notifications toggle in settings UI
 - Atomic PID lock (`fcntl.flock`)
 - Structured logging with `RotatingFileHandler`
 - Type-validated config loading
-- 5 test modules (~200 test cases) covering all core modules
+- 6 test modules (~200+ test cases) covering all core modules
 - `.app` bundle build via `build_app.sh`
 - `install.sh` builds, copies, and registers launchd login item
 - Version single-sourced from `credclaude/__init__.py`
 - Warn lock file cleanup on startup
+- Local retry guard in `OfficialLimitProvider`: exponential backoff on 429, 5-min cooldown on 401; "Refresh Now" bypasses guard via `force_refresh()`
 
 ## Near-term improvements
 - Add "Open logs folder" menu item for easier support
