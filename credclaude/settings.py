@@ -16,6 +16,9 @@ from AppKit import (
     NSCenterTextAlignment,
     NSClosableWindowMask,
     NSColor,
+    NSEvent,
+    NSEventMaskKeyDown,
+    NSEventModifierFlagCommand,
     NSFont,
     NSForegroundColorAttributeName,
     NSImage,
@@ -208,6 +211,7 @@ class SettingsWindow:
         self._on_save = on_save
         self._data_source = data_source
         self._updating = False
+        self._event_monitor = None
 
     @classmethod
     def show(cls, config: dict, on_save: Callable[[dict], None],
@@ -266,10 +270,34 @@ class SettingsWindow:
         content.addSubview_(footer)
 
         # =================================================================
-        # ACTIONS section  (y=46 label, y=70 box h=132)
+        # Reset to Defaults — standalone at very bottom
         # =================================================================
-        content.addSubview_(_section_label("Actions", _PAD, 46))
-        box = _section_box(70, 132)
+        reset_box = _section_box(66, 44)
+        content.addSubview_(reset_box)
+
+        reset_btn = NSButton.alloc().initWithFrame_(
+            NSMakeRect(_INNER, 0, box_w - 2 * _INNER - 24, _ROW_H)
+        )
+        red_title = NSAttributedString.alloc().initWithString_attributes_(
+            "Reset to Defaults",
+            {NSForegroundColorAttributeName: NSColor.systemRedColor()}
+        )
+        reset_btn.setAttributedTitle_(red_title)
+        reset_btn.setBordered_(False)
+        reset_btn.setAlignment_(NSLeftTextAlignment)
+        reset_btn.setFont_(NSFont.systemFontOfSize_(13))
+        reset_btn.setTarget_(self._delegate)
+        reset_btn.setAction_(
+            objc.selector(self._delegate.onResetDefaults_, signature=b"v@:@")
+        )
+        reset_box.addSubview_(reset_btn)
+        _chevron(reset_box, 0, color=NSColor.systemRedColor())
+
+        # =================================================================
+        # ACTIONS section  (label y=222, box y=126 h=88)
+        # =================================================================
+        content.addSubview_(_section_label("Actions", _PAD, 222))
+        box = _section_box(126, 88)
         content.addSubview_(box)
 
         # Row 1 — bottom: Check for Updates (local y=0..44)
@@ -289,7 +317,7 @@ class SettingsWindow:
 
         _separator(box, 44)
 
-        # Row 2 — middle: View Logs (local y=44..88)
+        # Row 2 — top: View Logs (local y=44..88)
         self._logs_btn = NSButton.alloc().initWithFrame_(
             NSMakeRect(_INNER, 44, box_w - 2 * _INNER - 24, _ROW_H)
         )
@@ -304,32 +332,11 @@ class SettingsWindow:
         box.addSubview_(self._logs_btn)
         _chevron(box, 44)
 
-        _separator(box, 88)
-
-        # Row 3 — top: Reset to Defaults (local y=88..132)
-        reset_btn = NSButton.alloc().initWithFrame_(
-            NSMakeRect(_INNER, 88, box_w - 2 * _INNER - 24, _ROW_H)
-        )
-        red_title = NSAttributedString.alloc().initWithString_attributes_(
-            "Reset to Defaults",
-            {NSForegroundColorAttributeName: NSColor.systemRedColor()}
-        )
-        reset_btn.setAttributedTitle_(red_title)
-        reset_btn.setBordered_(False)
-        reset_btn.setAlignment_(NSLeftTextAlignment)
-        reset_btn.setFont_(NSFont.systemFontOfSize_(13))
-        reset_btn.setTarget_(self._delegate)
-        reset_btn.setAction_(
-            objc.selector(self._delegate.onResetDefaults_, signature=b"v@:@")
-        )
-        box.addSubview_(reset_btn)
-        _chevron(box, 88, color=NSColor.systemRedColor())
-
         # =================================================================
-        # SYSTEM section  (y=226 label, y=250 box h=88)
+        # SYSTEM section  (label y=350, box y=254 h=88)
         # =================================================================
-        content.addSubview_(_section_label("System", _PAD, 226))
-        box = _section_box(250, 88)
+        content.addSubview_(_section_label("System", _PAD, 350))
+        box = _section_box(254, 88)
         content.addSubview_(box)
 
         # Row 2 — top: Version (local y=44..88)
@@ -369,10 +376,10 @@ class SettingsWindow:
         box.addSubview_(src_lbl)
 
         # =================================================================
-        # MONITORING section  (y=362 label, y=386 box h=88)
+        # MONITORING section  (label y=478, box y=382 h=88)
         # =================================================================
-        content.addSubview_(_section_label("Monitoring", _PAD, 362))
-        box = _section_box(386, 88)
+        content.addSubview_(_section_label("Monitoring", _PAD, 478))
+        box = _section_box(382, 88)
         content.addSubview_(box)
 
         auto_refresh_on = self._config.get("auto_refresh", True)
@@ -395,7 +402,7 @@ class SettingsWindow:
         box.addSubview_(_label("Refresh interval", _INNER, 12))
 
         self._unit_popup = NSPopUpButton.alloc().initWithFrame_(
-            NSMakeRect(box_w - _INNER - 60, 9, 60, 26)
+            NSMakeRect(box_w - _INNER - 60, 11, 60, 22)
         )
         self._unit_popup.addItemWithTitle_("sec")
         self._unit_popup.addItemWithTitle_("min")
@@ -403,6 +410,7 @@ class SettingsWindow:
         self._unit_popup.setAction_(
             objc.selector(self._delegate.onUnitChange_, signature=b"v@:@")
         )
+        self._unit_popup.setFocusRingType_(1)  # NSFocusRingTypeNone
         self._unit_popup.setEnabled_(auto_refresh_on)
         box.addSubview_(self._unit_popup)
 
@@ -412,8 +420,21 @@ class SettingsWindow:
         )
         self._refresh_field.setEditable_(auto_refresh_on)
         self._refresh_field.setEnabled_(auto_refresh_on)
+        self._refresh_field.setFocusRingType_(1)  # NSFocusRingTypeNone
         self._refresh_field.setDelegate_(self._field_delegate)
         box.addSubview_(self._refresh_field)
+
+        # Install Cmd+W handler so the window closes like any normal macOS window
+        def _cmd_w_handler(event):
+            if (event.modifierFlags() & NSEventModifierFlagCommand and
+                    event.charactersIgnoringModifiers() == "w"):
+                self._window.performClose_(None)
+                return None
+            return event
+
+        self._event_monitor = NSEvent.addLocalMonitorForEventsMatchingMask_handler_(
+            NSEventMaskKeyDown, _cmd_w_handler
+        )
 
     def _reset_to_defaults(self) -> None:
         self._auto_refresh_switch.setState_(1)
@@ -425,6 +446,10 @@ class SettingsWindow:
         self._unit_popup.setEnabled_(True)
 
     def _save_and_close(self) -> None:
+        if self._event_monitor is not None:
+            NSEvent.removeMonitor_(self._event_monitor)
+            self._event_monitor = None
+
         cfg = self._config
 
         # Auto refresh
