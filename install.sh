@@ -12,8 +12,38 @@ PLIST_PATH="$HOME/Library/LaunchAgents/$PLIST_NAME.plist"
 APP_NAME="CredClaude"
 APP_DEST="$HOME/Applications/$APP_NAME.app"
 
+require_cmd() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "Missing required tool: $1" >&2
+    exit 1
+  fi
+}
+
+launch_agent_is_loaded() {
+  launchctl print "gui/$UID/$PLIST_NAME" >/dev/null 2>&1 || launchctl list "$PLIST_NAME" >/dev/null 2>&1
+}
+
+stop_launch_agent() {
+  if launch_agent_is_loaded; then
+    echo "→ Stopping existing launchd agent..."
+    launchctl bootout "gui/$UID" "$PLIST_PATH" 2>/dev/null \
+      || launchctl bootout "gui/$UID/$PLIST_NAME" 2>/dev/null \
+      || launchctl unload "$PLIST_PATH" 2>/dev/null \
+      || true
+  fi
+}
+
+load_launch_agent() {
+  launchctl bootstrap "gui/$UID" "$PLIST_PATH" 2>/dev/null || launchctl load "$PLIST_PATH"
+}
+
 echo "=== CredClaude Installer ==="
 echo ""
+
+# Preflight checks
+for tool in python3 launchctl osascript open ditto xattr; do
+  require_cmd "$tool"
+done
 
 # 0. Quit any running instance before rebuilding
 if pgrep -x "CredClaude" &>/dev/null; then
@@ -22,6 +52,15 @@ if pgrep -x "CredClaude" &>/dev/null; then
   sleep 1
   # Force-kill if still running after graceful quit
   pkill -x "CredClaude" 2>/dev/null || true
+fi
+
+# 0b. Stop launchd before replacing the bundle
+stop_launch_agent
+
+# 0c. Remove previous installed app so Finder cannot reuse the old bundle
+if [ -d "$APP_DEST" ]; then
+  echo "→ Removing previous app bundle..."
+  rm -rf "$APP_DEST"
 fi
 
 # 1. Create venv
@@ -40,10 +79,7 @@ bash "$SCRIPT_DIR/build_app.sh"
 # 4. Copy to ~/Applications
 echo "→ Installing to ~/Applications..."
 mkdir -p "$HOME/Applications"
-if [ -d "$APP_DEST" ]; then
-  rm -rf "$APP_DEST"
-fi
-cp -R "$SCRIPT_DIR/dist/$APP_NAME.app" "$APP_DEST"
+ditto "$SCRIPT_DIR/dist/$APP_NAME.app" "$APP_DEST"
 
 # 5. Create app support dir
 mkdir -p "$APP_DIR"
@@ -82,11 +118,8 @@ cat > "$PLIST_PATH" <<PLIST
 PLIST
 
 # 7. Load the agent
-if launchctl list "$PLIST_NAME" &>/dev/null; then
-  echo "→ Reloading existing launchd agent..."
-  launchctl unload "$PLIST_PATH" 2>/dev/null || true
-fi
-launchctl load "$PLIST_PATH"
+echo "→ Loading launchd agent..."
+load_launch_agent
 
 # 8. Launch the new version explicitly
 # (launchctl load with RunAtLoad only fires on a fresh load — open ensures the
@@ -102,5 +135,23 @@ echo "   App:        $APP_DEST"
 echo "   Config:     $APP_DIR/config.json"
 echo "   Logs:       $APP_DIR/monitor.log"
 echo "   Pricing:    $APP_DIR/pricing.json"
+echo ""
+echo "   First launch / trust:"
+echo "   - The installer already placed the app in ~/Applications."
+echo "   - If macOS says the app cannot be opened, open Finder → ~/Applications,"
+echo "     Control-click CredClaude.app, choose Open, then confirm."
+echo "   - If macOS still blocks it, go to System Settings → Privacy & Security"
+echo "     and click Open Anyway for CredClaude."
+if xattr -p com.apple.quarantine "$APP_DEST" >/dev/null 2>&1 || xattr -p com.apple.quarantine "$SCRIPT_DIR" >/dev/null 2>&1; then
+  echo "   - This copy appears to carry a quarantine attribute, so macOS may"
+  echo "     require that manual Open step the first time you launch it."
+fi
+echo ""
+echo "   If Finder or Launchpad still shows the old icon after reinstall:"
+echo "   - That is usually icon cache lag, not a failed build."
+echo "   - Close any Finder windows showing the app, quit and reopen CredClaude,"
+echo "     then log out/in if the icon still has not refreshed."
+echo "   - If you later move or rename the app bundle, rerun install.sh so the"
+echo "     launch agent points back at ~/Applications/CredClaude.app."
 echo ""
 echo "   To uninstall:  bash $SCRIPT_DIR/uninstall.sh"

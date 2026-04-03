@@ -2,10 +2,26 @@
 # CredClaude — Uninstall Script
 # Stops the launchd agent, removes the plist, and removes the .app bundle.
 
+set -euo pipefail
+
 PLIST_NAME="com.veer.credclaude"
 PLIST_PATH="$HOME/Library/LaunchAgents/$PLIST_NAME.plist"
 APP_NAME="CredClaude"
 APP_DEST="$HOME/Applications/$APP_NAME.app"
+
+launch_agent_is_loaded() {
+  launchctl print "gui/$UID/$PLIST_NAME" >/dev/null 2>&1 || launchctl list "$PLIST_NAME" >/dev/null 2>&1
+}
+
+stop_launch_agent() {
+  if launch_agent_is_loaded; then
+    echo "→ Stopping launchd agent..."
+    launchctl bootout "gui/$UID" "$PLIST_PATH" 2>/dev/null \
+      || launchctl bootout "gui/$UID/$PLIST_NAME" 2>/dev/null \
+      || launchctl unload "$PLIST_PATH" 2>/dev/null \
+      || true
+  fi
+}
 
 echo "=== Uninstalling CredClaude ==="
 
@@ -18,10 +34,7 @@ if pgrep -x "CredClaude" &>/dev/null; then
 fi
 
 # Stop and unload launchd agent
-if launchctl list "$PLIST_NAME" &>/dev/null; then
-  echo "→ Stopping launchd agent..."
-  launchctl unload "$PLIST_PATH" 2>/dev/null || true
-fi
+stop_launch_agent
 
 # Remove plist
 if [ -f "$PLIST_PATH" ]; then
@@ -37,6 +50,7 @@ fi
 
 echo ""
 echo "✅ Uninstalled."
-echo "   Config and logs remain at ~/.credclaude/"
-echo "   Delete that folder manually for a full clean removal:"
+echo "   App bundle and login item were removed."
+echo "   Config, logs, and pricing data remain at ~/.credclaude/."
+echo "   Delete that folder manually only if you want a full data reset:"
 echo "     rm -rf ~/.credclaude"

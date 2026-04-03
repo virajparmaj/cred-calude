@@ -9,14 +9,11 @@ from __future__ import annotations
 import datetime
 import logging
 import time
-from pathlib import Path
 
 import objc
 import rumps
 from AppKit import NSApplication, NSBundle, NSImage, NSObject
 from Foundation import NSProcessInfo
-
-_ICON_PATH = Path(__file__).parent.parent / "claude_monitor_logo.png"
 
 from credclaude import __version__
 from credclaude.auth_launcher import ReauthGate, launch_claude_auth_login
@@ -38,6 +35,7 @@ from credclaude.notifications import (
     write_lock,
 )
 from credclaude.formatting import make_bar
+from credclaude.icon_assets import menu_bar_icon_path, runtime_icon_path
 from credclaude.time_utils import fmt_datetime as _fmt_datetime, fmt_relative as _fmt_relative
 
 logger = logging.getLogger("credclaude.app")
@@ -68,12 +66,14 @@ class CredClaude(rumps.App):
             _info["CFBundleName"] = "CredClaude"
             _info["CFBundleDisplayName"] = "CredClaude"
 
-        icon = str(_ICON_PATH) if _ICON_PATH.exists() else None
-        super().__init__("CredClaude", title=None, icon=icon, template=False, quit_button=None)
+        status_icon_path = menu_bar_icon_path()
+        status_icon = str(status_icon_path) if status_icon_path is not None else None
+        super().__init__("CredClaude", title=None, icon=status_icon, template=False, quit_button=None)
 
         # Set dock icon and process name (overrides Python defaults)
-        if _ICON_PATH.exists():
-            ns_icon = NSImage.alloc().initWithContentsOfFile_(str(_ICON_PATH))
+        icon_path = runtime_icon_path()
+        if icon_path is not None:
+            ns_icon = NSImage.alloc().initWithContentsOfFile_(str(icon_path))
             if ns_icon:
                 NSApplication.sharedApplication().setApplicationIconImage_(ns_icon)
         NSProcessInfo.processInfo().setValue_forKey_("CredClaude", "processName")

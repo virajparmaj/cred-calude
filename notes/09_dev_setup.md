@@ -38,7 +38,7 @@ bash uninstall.sh
 ## Important details
 - Python 3.11+ required (3.14 used in current dev venv). No strict minor version pinned.
 - `build_app.sh` reads version from `credclaude/__init__.py` — single source of truth.
-- `build_app.sh` builds `dist/CredClaude.app` using a shell launcher script wrapping `python -m credclaude`. Includes icon built from `claude_monitor_logo.png`.
+- `build_app.sh` builds `dist/CredClaude.app` using a shell launcher script wrapping `python -m credclaude`. Includes icon resources built from the tracked `assets/icons/macos/` sources.
 - App logs go to `~/.credclaude/monitor.log` (RotatingFileHandler, not captured by launchd).
 - No `.env` or environment variable parsing in application code.
 

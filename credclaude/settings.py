@@ -38,12 +38,12 @@ from AppKit import (
 
 from credclaude import __version__
 from credclaude.config import load_config, save_config, REFRESH_INTERVAL_SEC, LOG_PATH
+from credclaude.icon_assets import runtime_icon_path
 
 logger = logging.getLogger("credclaude.settings")
 
 _REPO_DIR = Path(__file__).parent.parent
 _INSTALL_SCRIPT = _REPO_DIR / "install.sh"
-_ICON_PATH = _REPO_DIR / "claude_monitor_logo.png"
 
 _W = 500
 _H = 510
@@ -238,8 +238,9 @@ class SettingsWindow:
         self._window.setTitle_("CredClaude Settings")
         self._window.setReleasedWhenClosed_(False)
 
-        if _ICON_PATH.exists():
-            ns_icon = NSImage.alloc().initWithContentsOfFile_(str(_ICON_PATH))
+        icon_path = runtime_icon_path()
+        if icon_path is not None:
+            ns_icon = NSImage.alloc().initWithContentsOfFile_(str(icon_path))
             if ns_icon:
                 self._window.setMiniwindowImage_(ns_icon)
 

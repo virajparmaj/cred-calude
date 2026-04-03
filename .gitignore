@@ -7,3 +7,5 @@ build/
 *.egg-info/
 .pytest_cache/
 .eggs/
+# Local staging folder; the tracked production icon sources live in assets/icons/macos/.
+MacOS icons

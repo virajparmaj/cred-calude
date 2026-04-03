@@ -1,7 +1,7 @@
 # CredClaude
 
 <div align="center">
-    <img src="claude_monitor_logo.png" alt="CredClaude logo" width="200"/>
+    <img src="assets/icons/macos/claude_monitor_icon_512.png" alt="CredClaude logo" width="200"/>
 </div>
 
 ## What is CredClaude?
@@ -99,6 +99,9 @@ bash install.sh
 - It auto-starts when you log in
 - Config file lives at `~/.credclaude/config.json`
 - Logs are saved to `~/.credclaude/monitor.log`
+- If macOS blocks first launch, open `~/Applications/CredClaude.app` from Finder with **Open**
+- If needed, use System Settings → Privacy & Security → **Open Anyway**
+- If Finder or Launchpad still shows the previous icon briefly, that is usually icon cache lag after reinstall
 
 ### Uninstall
 
@@ -114,6 +117,13 @@ This will:
 3. Remove the `.app` from `~/Applications/`
 
 Config and logs at `~/.credclaude/` are kept. Delete that folder manually for a full clean removal.
+
+### First-Launch macOS Notes
+
+- `install.sh` already places the app in `~/Applications/CredClaude.app`
+- If the app was downloaded with quarantine metadata, macOS may require one manual **Open** from Finder before future launches work normally
+- If the bundle is moved or renamed later, rerun `bash install.sh` so the login item points at the correct path
+- If the icon looks stale in Finder or Launchpad right after reinstall, quit and reopen the app and give Finder a moment before assuming the rebuild failed
 
 ## Configuration
 
