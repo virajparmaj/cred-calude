@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Optional
+
 
 def make_bar(pct: float, width: int = 20) -> str:
     """Return a text progress bar like ■■■■■■■■□□□□□□□□□□□□."""
@@ -26,3 +28,10 @@ def fmt_cost(c: float) -> str:
     if c >= 10:
         return f"${c:.1f}"
     return f"${c:.2f}"
+
+
+def fmt_extra_usage_spend(used: Optional[float], monthly_limit: Optional[float]) -> str | None:
+    """Format extra-usage spend against cap for the menu fallback."""
+    if used is None or monthly_limit is None:
+        return None
+    return f"Extra usage: ${used:.2f} / ${monthly_limit:.2f}"

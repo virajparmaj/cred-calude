@@ -14,7 +14,9 @@ from credclaude.limit_providers import (
     EstimatorLimitProvider,
     OfficialLimitProvider,
     _RateLimitError,
+    _coerce_snapshot_extra_usage_usd,
     _load_snapshot,
+    _normalize_extra_usage_usd,
     _normalize_utilization,
     _save_snapshot,
 )
@@ -1285,8 +1287,8 @@ class TestExtraUsage:
 
     def test_extra_usage_enabled(self):
         body = _make_full_api_response(
-            extra_usage={"is_enabled": True, "monthly_limit": 100.0,
-                         "used_credits": 25.0, "utilization": 0.25}
+            extra_usage={"is_enabled": True, "monthly_limit": 2000,
+                         "used_credits": 0, "utilization": 0.25}
         )
         provider = OfficialLimitProvider()
 
@@ -1295,8 +1297,23 @@ class TestExtraUsage:
                 info = provider.get_limit_info()
 
         assert info.extra_usage_enabled is True
-        assert info.extra_usage_monthly_limit == pytest.approx(100.0)
-        assert info.extra_usage_used == pytest.approx(25.0)
+        assert info.extra_usage_monthly_limit == pytest.approx(20.0)
+        assert info.extra_usage_used == pytest.approx(0.0)
+        assert info.extra_usage_utilization == pytest.approx(25.0)
+
+    def test_extra_usage_money_fields_are_normalized_from_cents(self):
+        body = _make_full_api_response(
+            extra_usage={"is_enabled": True, "monthly_limit": 5000,
+                         "used_credits": 1250, "utilization": 0.25}
+        )
+        provider = OfficialLimitProvider()
+
+        with patch("subprocess.run", return_value=self._mock_subprocess()):
+            with patch("urllib.request.urlopen", return_value=self._mock_urlopen(body)):
+                info = provider.get_limit_info()
+
+        assert info.extra_usage_monthly_limit == pytest.approx(50.0)
+        assert info.extra_usage_used == pytest.approx(12.5)
         assert info.extra_usage_utilization == pytest.approx(25.0)
 
     def test_extra_usage_missing_from_response(self):
@@ -1386,8 +1403,8 @@ class TestSnapshotNewFields:
         body = _make_full_api_response(
             utilization=0.5,
             seven_day={"utilization": 0.2, "resets_at": weekly_resets},
-            extra_usage={"is_enabled": True, "monthly_limit": 50.0,
-                         "used_credits": 10.0, "utilization": 0.2},
+            extra_usage={"is_enabled": True, "monthly_limit": 5000,
+                         "used_credits": 1000, "utilization": 0.2},
         )
 
         mock_proc = MagicMock(returncode=0, stdout=kc)
@@ -1414,3 +1431,76 @@ class TestSnapshotNewFields:
         assert info.weekly_utilization_pct == pytest.approx(20.0)
         assert info.subscription_type == "max"
         assert info.extra_usage_enabled is True
+        assert info.extra_usage_monthly_limit == pytest.approx(50.0)
+        assert info.extra_usage_used == pytest.approx(10.0)
+
+    def test_snapshot_round_trip_preserves_normalized_extra_usage_usd(self, tmp_path):
+        snapshot_path = tmp_path / "snapshot.json"
+        info = LimitInfo(
+            source="official (claude.ai)",
+            utilization_pct=45.0,
+            resets_at=datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=2),
+            last_sync=datetime.datetime.now(datetime.timezone.utc),
+            state=ProviderState.HEALTHY,
+            confidence=Confidence.HIGH,
+            subscription_type="pro",
+            rate_limit_tier="default_claude_ai",
+            extra_usage_enabled=True,
+            extra_usage_monthly_limit=20.0,
+            extra_usage_used=12.5,
+            extra_usage_utilization=62.5,
+        )
+
+        with patch("credclaude.limit_providers.SNAPSHOT_PATH", snapshot_path):
+            _save_snapshot(info)
+            loaded = _load_snapshot()
+
+        assert loaded is not None
+        assert loaded.extra_usage_enabled is True
+        assert loaded.extra_usage_monthly_limit == pytest.approx(20.0)
+        assert loaded.extra_usage_used == pytest.approx(12.5)
+        assert loaded.extra_usage_utilization == pytest.approx(62.5)
+
+        raw = json.loads(snapshot_path.read_text())
+        assert raw["extra_usage_currency_unit"] == "usd"
+
+    def test_load_legacy_snapshot_upgrades_raw_cent_values(self, tmp_path):
+        snapshot_path = tmp_path / "snapshot.json"
+        future = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=2)
+        now = datetime.datetime.now(datetime.timezone.utc)
+        snapshot_path.write_text(json.dumps({
+            "utilization_pct": 30.0,
+            "resets_at": future.isoformat(),
+            "last_sync": now.isoformat(),
+            "source": "official (claude.ai)",
+            "saved_at": now.isoformat(),
+            "extra_usage_enabled": True,
+            "extra_usage_monthly_limit": 2000,
+            "extra_usage_used": 1250,
+            "extra_usage_utilization": 62.5,
+        }))
+
+        with patch("credclaude.limit_providers.SNAPSHOT_PATH", snapshot_path):
+            loaded = _load_snapshot()
+
+        assert loaded is not None
+        assert loaded.extra_usage_monthly_limit == pytest.approx(20.0)
+        assert loaded.extra_usage_used == pytest.approx(12.5)
+        assert loaded.extra_usage_utilization == pytest.approx(62.5)
+
+
+class TestNormalizeExtraUsageUsd:
+    def test_converts_cents_to_usd(self):
+        assert _normalize_extra_usage_usd(2000) == pytest.approx(20.0)
+        assert _normalize_extra_usage_usd(1250) == pytest.approx(12.5)
+
+    def test_none_stays_none(self):
+        assert _normalize_extra_usage_usd(None) is None
+
+
+class TestCoerceSnapshotExtraUsageUsd:
+    def test_keeps_normalized_usd_when_snapshot_marks_currency_unit(self):
+        assert _coerce_snapshot_extra_usage_usd(20.0, "usd") == pytest.approx(20.0)
+
+    def test_upgrades_legacy_snapshot_cent_values(self):
+        assert _coerce_snapshot_extra_usage_usd(2000, None) == pytest.approx(20.0)

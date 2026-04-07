@@ -12,8 +12,15 @@ import time
 
 import objc
 import rumps
-from AppKit import NSApplication, NSApplicationActivationPolicyAccessory, NSBundle, NSImage, NSObject
-from Foundation import NSProcessInfo
+from AppKit import (
+    NSApplication,
+    NSApplicationActivationPolicyAccessory,
+    NSBundle,
+    NSImage,
+    NSImageScaleProportionallyDown,
+    NSObject,
+)
+from Foundation import NSProcessInfo, NSSize
 
 from credclaude import __version__
 from credclaude.auth_launcher import ReauthGate, launch_claude_auth_login
@@ -35,8 +42,8 @@ from credclaude.notifications import (
     send_notification,
     write_lock,
 )
-from credclaude.formatting import make_bar
-from credclaude.icon_assets import menu_bar_icon_path, runtime_icon_path
+from credclaude.formatting import fmt_extra_usage_spend, make_bar
+from credclaude.icon_assets import load_status_icon, menu_bar_icon_path, runtime_icon_path
 from credclaude.time_utils import fmt_datetime as _fmt_datetime, fmt_relative as _fmt_relative
 
 logger = logging.getLogger("credclaude.app")
@@ -249,10 +256,10 @@ class CredClaude(rumps.App):
                 )
             elif (limit.extra_usage_used is not None
                   and limit.extra_usage_monthly_limit is not None):
-                self._extra_usage_item.title = (
-                    f"Extra usage: ${limit.extra_usage_used:.2f}"
-                    f" / ${limit.extra_usage_monthly_limit:.2f}"
-                )
+                self._extra_usage_item.title = fmt_extra_usage_spend(
+                    limit.extra_usage_used,
+                    limit.extra_usage_monthly_limit,
+                ) or "Extra usage: enabled"
             else:
                 self._extra_usage_item.title = "Extra usage: enabled"
 
@@ -272,9 +279,27 @@ class CredClaude(rumps.App):
     # ------------------------------------------------------------------
     # Timer callbacks
     # ------------------------------------------------------------------
+    def _apply_retina_icon(self) -> None:
+        """Set dual-rep 1x/2x NSImage on the status bar button for Retina support.
+
+        Must be called after rumps.App.run() has started the event loop because
+        _nsapp.nsstatusitem is only created inside run(), not __init__.
+        """
+        ns_icon = load_status_icon()
+        _nsapp = getattr(self, '_nsapp', None)
+        nsstatusitem = getattr(_nsapp, 'nsstatusitem', None) if _nsapp is not None else None
+        if ns_icon is None or nsstatusitem is None:
+            return
+        btn = nsstatusitem.button()
+        if btn is not None:
+            ns_icon.setSize_(NSSize(22, 22))
+            btn.setImage_(ns_icon)
+            btn.setImageScaling_(NSImageScaleProportionallyDown)
+
     def _startup_update(self, sender) -> None:
         """Delayed first update — uses snapshot if fresh, else hits API."""
         sender.stop()
+        self._apply_retina_icon()
         if self._provider.try_snapshot_startup():
             # Snapshot seeded the cache — display it immediately
             self._update()

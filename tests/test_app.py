@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime
 
+from credclaude.formatting import fmt_extra_usage_spend
 from credclaude.time_utils import fmt_datetime, fmt_relative
 
 
@@ -33,3 +34,11 @@ class TestFmtDatetime:
         result = fmt_datetime(dt)
         assert result != "--"
         assert "Apr" in result
+
+
+class TestFmtExtraUsageSpend:
+    def test_formats_normalized_usd_spend_and_cap(self):
+        assert fmt_extra_usage_spend(0.0, 20.0) == "Extra usage: $0.00 / $20.00"
+
+    def test_does_not_emit_raw_cent_values(self):
+        assert fmt_extra_usage_spend(0.0, 20.0) != "Extra usage: $0.00 / $2000.00"

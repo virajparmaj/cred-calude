@@ -18,8 +18,8 @@ Document data contracts and integration boundaries used by the app.
   - `seven_day.utilization` — float (0.0–1.0); weekly utilization %. `None` for accounts without a weekly cap.
   - `seven_day.resets_at` — ISO8601 timestamp for next 7-day window reset; parsed with 8-day max-future guard (`_WEEKLY_RESET_MAX_FUTURE_SEC`).
   - `extra_usage.enabled` — bool; whether extra (add-on) usage is active.
-  - `extra_usage.monthly_limit` — float; monthly dollar cap for extra usage.
-  - `extra_usage.used` — float; dollars used toward extra usage this month.
+  - `extra_usage.monthly_limit` — numeric value observed in cent-denominated transport units; normalized to USD before storing in `LimitInfo`.
+  - `extra_usage.used_credits` — numeric value observed in cent-denominated transport units; normalized to USD before storing in `LimitInfo`.
   - `extra_usage.utilization` — float (0.0–1.0); fraction of extra usage cap consumed.
 - **Error handling**:
   - HTTP 401 → token expired; 5-min cooldown, menu shows "(stale)" + `"Token expired — run: claude auth login"`
@@ -39,7 +39,7 @@ Document data contracts and integration boundaries used by the app.
   - `plan_tier` (str: `"pro"` | `"max_5x"` | `"max_20x"`)
   - Type-validated on load; invalid fields reset to defaults (`credclaude/config.py`).
 - **Pricing** (`~/.credclaude/pricing.json`): model-family rate map with `updated_at` field; staleness-checked at startup.
-- **Snapshot** (`~/.credclaude/snapshot.json`): last successful `LimitInfo` serialized to JSON.
+- **Snapshot** (`~/.credclaude/last_usage.json`): last successful `LimitInfo` serialized to JSON.
 
 ## Inferred / proposed
 - [Strongly inferred] Refresh interval (60s) and backoff steps are tunable via constants in `credclaude/config.py` and `credclaude/limit_providers.py`.

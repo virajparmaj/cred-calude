@@ -15,7 +15,7 @@ No database exists. All persistence uses local files and in-memory state.
 |---|---|---|---|
 | Config | `~/.credclaude/config.json` | JSON | User settings: `billing_day`, `daily_budget_usd`, `warn_at_pct`, `notifications_enabled`, `plan_tier` (`credclaude/config.py`) |
 | Pricing table | `~/.credclaude/pricing.json` | JSON | Per-model token rates with `updated_at` field; shipped from `default_pricing.json` on first run (`credclaude/config.py`) |
-| Usage snapshot | `~/.credclaude/snapshot.json` | JSON | Last successful OAuth API response; persists utilization across app restarts (`credclaude/limit_providers.py`) |
+| Usage snapshot | `~/.credclaude/last_usage.json` | JSON | Last successful OAuth API response; persists utilization across app restarts (`credclaude/limit_providers.py`) |
 | Reset notification lock | `~/.credclaude/.last_reset_notif` | Plain text (ISO date) | Prevents duplicate billing-reset notifications per day (`credclaude/notifications.py`) |
 | Budget warning locks | `~/.credclaude/.warn_{YYYY-MM-DD}` | Plain text (ISO date) | One file per day; auto-cleaned on startup if >7 days old (`credclaude/notifications.py`) |
 | PID lock | `~/.credclaude/monitor.pid` | Plain text (PID) | Atomic single-instance guard via `fcntl.flock` (`credclaude/__main__.py`) |

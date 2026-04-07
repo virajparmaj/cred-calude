@@ -117,6 +117,25 @@ def _normalize_utilization(value: float) -> float:
     return max(0.0, min(100.0, round(value, 1)))
 
 
+def _normalize_extra_usage_usd(value: float | int | None) -> float | None:
+    """Normalize cent-denominated extra-usage money fields to USD."""
+    if value is None:
+        return None
+    return round(float(value) / 100.0, 2)
+
+
+def _coerce_snapshot_extra_usage_usd(
+    value: float | int | None,
+    currency_unit: str | None,
+) -> float | None:
+    """Load extra-usage money from snapshot, upgrading legacy cent values."""
+    if value is None:
+        return None
+    if currency_unit == "usd":
+        return round(float(value), 2)
+    return _normalize_extra_usage_usd(value)
+
+
 # ---------------------------------------------------------------------------
 # Disk snapshot — persists last successful usage across app restarts
 # ---------------------------------------------------------------------------
@@ -159,6 +178,7 @@ def _save_snapshot(info: LimitInfo) -> None:
             "extra_usage_monthly_limit": info.extra_usage_monthly_limit,
             "extra_usage_used": info.extra_usage_used,
             "extra_usage_utilization": info.extra_usage_utilization,
+            "extra_usage_currency_unit": "usd",
         }
         SNAPSHOT_PATH.parent.mkdir(parents=True, exist_ok=True)
         SNAPSHOT_PATH.write_text(json.dumps(data))
@@ -188,6 +208,7 @@ def _load_snapshot() -> LimitInfo | None:
                 raw_weekly_resets, "snapshot weekly",
                 max_future_sec=_WEEKLY_RESET_MAX_FUTURE_SEC,
             )
+        extra_usage_currency_unit = data.get("extra_usage_currency_unit")
         return LimitInfo(
             source=data.get("source", "official"),
             utilization_pct=data.get("utilization_pct"),
@@ -200,8 +221,14 @@ def _load_snapshot() -> LimitInfo | None:
             subscription_type=data.get("subscription_type"),
             rate_limit_tier=data.get("rate_limit_tier"),
             extra_usage_enabled=data.get("extra_usage_enabled"),
-            extra_usage_monthly_limit=data.get("extra_usage_monthly_limit"),
-            extra_usage_used=data.get("extra_usage_used"),
+            extra_usage_monthly_limit=_coerce_snapshot_extra_usage_usd(
+                data.get("extra_usage_monthly_limit"),
+                extra_usage_currency_unit,
+            ),
+            extra_usage_used=_coerce_snapshot_extra_usage_usd(
+                data.get("extra_usage_used"),
+                extra_usage_currency_unit,
+            ),
             extra_usage_utilization=data.get("extra_usage_utilization"),
         )
     except Exception as e:
@@ -470,6 +497,7 @@ class OfficialLimitProvider(LimitProvider):
                     raw_weekly_resets, "startup weekly",
                     max_future_sec=_WEEKLY_RESET_MAX_FUTURE_SEC,
                 )
+            extra_usage_currency_unit = data.get("extra_usage_currency_unit")
 
             info = LimitInfo(
                 source=data.get("source", "official"),
@@ -483,8 +511,14 @@ class OfficialLimitProvider(LimitProvider):
                 subscription_type=data.get("subscription_type"),
                 rate_limit_tier=data.get("rate_limit_tier"),
                 extra_usage_enabled=data.get("extra_usage_enabled"),
-                extra_usage_monthly_limit=data.get("extra_usage_monthly_limit"),
-                extra_usage_used=data.get("extra_usage_used"),
+                extra_usage_monthly_limit=_coerce_snapshot_extra_usage_usd(
+                    data.get("extra_usage_monthly_limit"),
+                    extra_usage_currency_unit,
+                ),
+                extra_usage_used=_coerce_snapshot_extra_usage_usd(
+                    data.get("extra_usage_used"),
+                    extra_usage_currency_unit,
+                ),
                 extra_usage_utilization=data.get("extra_usage_utilization"),
             )
             self._cached = info
@@ -537,8 +571,8 @@ class OfficialLimitProvider(LimitProvider):
         # Extra usage / API credits
         extra = data.get("extra_usage") or {}
         extra_enabled = extra.get("is_enabled")
-        extra_monthly_limit = extra.get("monthly_limit")
-        extra_used = extra.get("used_credits")
+        extra_monthly_limit = _normalize_extra_usage_usd(extra.get("monthly_limit"))
+        extra_used = _normalize_extra_usage_usd(extra.get("used_credits"))
         raw_extra_util = extra.get("utilization")
         extra_utilization = (
             _normalize_utilization(raw_extra_util) if raw_extra_util is not None else None
