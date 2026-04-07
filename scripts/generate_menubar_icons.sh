@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
-SOURCE="$REPO_ROOT/assets/credclaude_menubar_source.png"
+SOURCE="$REPO_ROOT/assets/icons/macos/claude_monitor_icon_1024.png"
 
 if [[ ! -f "$SOURCE" ]]; then
     echo "Error: source image not found at $SOURCE" >&2
