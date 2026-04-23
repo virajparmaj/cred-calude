@@ -19,6 +19,7 @@ from AppKit import (
     NSImage,
     NSImageScaleProportionallyDown,
     NSObject,
+    NSWorkspace,
 )
 from Foundation import NSProcessInfo, NSSize
 
@@ -27,6 +28,7 @@ from credclaude.auth_launcher import ReauthGate, launch_claude_auth_login
 from credclaude.config import (
     APP_DIR,
     CONFIG_PATH,
+    KEEPALIVE_STATE_PATH,
     NOTIF_LOCK_PATH,
     NOTIF_CHECK_INTERVAL_SEC,
     REFRESH_INTERVAL_SEC,
@@ -44,7 +46,11 @@ from credclaude.notifications import (
 )
 from credclaude.formatting import fmt_extra_usage_spend, make_bar
 from credclaude.icon_assets import load_status_icon, menu_bar_icon_path, runtime_icon_path
-from credclaude.time_utils import fmt_datetime as _fmt_datetime, fmt_relative as _fmt_relative
+from credclaude.time_utils import (
+    fmt_datetime as _fmt_datetime,
+    fmt_keepalive_status,
+    fmt_relative as _fmt_relative,
+)
 
 logger = logging.getLogger("credclaude.app")
 
@@ -64,6 +70,18 @@ class _MenuDelegate(NSObject):
         elapsed = time.monotonic() - app._last_refresh_time
         if elapsed >= _MENU_OPEN_STALE_SEC:
             app._refresh_now(None)
+
+
+class _WakeObserver(NSObject):
+    """Receives NSWorkspaceDidWakeNotification from macOS."""
+
+    app_ref = objc.ivar()
+
+    def workspaceDidWake_(self, notification):
+        app = self.app_ref
+        if app is None:
+            return
+        app._handle_wake()
 
 
 class CredClaude(rumps.App):
@@ -90,7 +108,10 @@ class CredClaude(rumps.App):
         NSProcessInfo.processInfo().setValue_forKey_("CredClaude", "processName")
         self.config = load_config()
         self._reauth_gate = ReauthGate(self._reauth_cooldown_sec())
-        self._keepalive_scheduler = KeepaliveScheduler()
+        self._keepalive_scheduler = KeepaliveScheduler(state_path=KEEPALIVE_STATE_PATH)
+        self._keepalive_scheduler.set_wake_system_enabled(
+            bool(self.config.get("keepalive_wake_system_enabled", False))
+        )
 
         # Limit provider (Official OAuth API + Estimator fallback)
         self._provider = CompositeLimitProvider(self.config)
@@ -108,11 +129,14 @@ class CredClaude(rumps.App):
         self._weekly_bar_item = rumps.MenuItem("Weekly: —", callback=_noop)
         self._weekly_reset_item = rumps.MenuItem("  Resets: —", callback=_noop)
         self._extra_usage_item = rumps.MenuItem("Extra usage: —", callback=_noop)
+        self._keepalive_status_item = rumps.MenuItem("Keepalive: —", callback=_noop)
+        self._keepalive_next_item = rumps.MenuItem("  Next: —", callback=_noop)
 
         # Separator items we need to hide/show with their sections
         self._sep_after_plan = rumps.MenuItem("")
         self._sep_after_weekly = rumps.MenuItem("")
         self._sep_after_extra = rumps.MenuItem("")
+        self._sep_after_keepalive = rumps.MenuItem("")
 
         # Build menu — separators are managed manually via NSMenuItem
         self.menu = [
@@ -123,6 +147,9 @@ class CredClaude(rumps.App):
             self._sep_after_weekly,
             self._extra_usage_item,
             self._sep_after_extra,
+            self._keepalive_status_item,
+            self._keepalive_next_item,
+            self._sep_after_keepalive,
             rumps.MenuItem("Refresh", callback=self._refresh_now),
             rumps.MenuItem("Re-authenticate", callback=self._reauth_now),
             rumps.MenuItem("Settings", callback=self._show_settings),
@@ -131,7 +158,12 @@ class CredClaude(rumps.App):
         ]
 
         # Replace placeholder items with real NSMenuItem separators
-        for sep_item in (self._sep_after_plan, self._sep_after_weekly, self._sep_after_extra):
+        for sep_item in (
+            self._sep_after_plan,
+            self._sep_after_weekly,
+            self._sep_after_extra,
+            self._sep_after_keepalive,
+        ):
             ns = sep_item._menuitem
             ns_menu = ns.menu()
             if ns_menu:
@@ -142,7 +174,7 @@ class CredClaude(rumps.App):
                 sep_item._menuitem = real_sep
 
         # Start with info items hidden (shown once data arrives)
-        self._set_info_hidden(plan=True, weekly=True, extra=True)
+        self._set_info_hidden(plan=True, weekly=True, extra=True, keepalive=True)
 
         # Set up menu delegate for click-to-refresh
         self._menu_delegate = _MenuDelegate.alloc().init()
@@ -151,6 +183,16 @@ class CredClaude(rumps.App):
         ns_menu = getattr(self._menu, '_menu', None)
         if ns_menu is not None:
             ns_menu.setDelegate_(self._menu_delegate)
+
+        # Register for macOS wake events so sleep doesn't break the keepalive.
+        self._wake_observer = _WakeObserver.alloc().init()
+        self._wake_observer.app_ref = self
+        NSWorkspace.sharedWorkspace().notificationCenter().addObserver_selector_name_object_(
+            self._wake_observer,
+            objc.selector(self._wake_observer.workspaceDidWake_, signature=b"v@:@"),
+            "NSWorkspaceDidWakeNotification",
+            None,
+        )
 
         self._startup_timer = rumps.Timer(self._startup_update, 5)
         self._startup_timer.start()
@@ -167,25 +209,33 @@ class CredClaude(rumps.App):
     # ------------------------------------------------------------------
     # Info item visibility
     # ------------------------------------------------------------------
-    def _set_info_hidden(self, plan: bool, weekly: bool, extra: bool) -> None:
+    def _set_info_hidden(
+        self, plan: bool, weekly: bool, extra: bool, keepalive: bool
+    ) -> None:
         """Show/hide info sections and their separators.
 
-        Separator logic avoids stacked/orphan separators:
-        - sep_after_plan: shown only if plan is visible AND (weekly or extra visible)
-        - sep_after_weekly: shown only if weekly is visible AND extra is visible
-        - sep_after_extra: shown if ANY info item is visible (divides info from actions)
+        Separator logic avoids stacked/orphan separators: each section's
+        trailing separator is hidden if that section OR all sections below
+        it are hidden.
         """
-        any_visible = not (plan and weekly and extra)
+        below_plan_visible = not (weekly and extra and keepalive)
+        below_weekly_visible = not (extra and keepalive)
+        below_extra_visible = not keepalive
+        any_visible = not (plan and weekly and extra and keepalive)
 
         self._plan_item._menuitem.setHidden_(plan)
-        self._sep_after_plan._menuitem.setHidden_(plan or (weekly and extra))
+        self._sep_after_plan._menuitem.setHidden_(plan or not below_plan_visible)
 
         self._weekly_bar_item._menuitem.setHidden_(weekly)
         self._weekly_reset_item._menuitem.setHidden_(weekly)
-        self._sep_after_weekly._menuitem.setHidden_(weekly or extra)
+        self._sep_after_weekly._menuitem.setHidden_(weekly or not below_weekly_visible)
 
         self._extra_usage_item._menuitem.setHidden_(extra)
-        self._sep_after_extra._menuitem.setHidden_(not any_visible)
+        self._sep_after_extra._menuitem.setHidden_(extra or not below_extra_visible)
+
+        self._keepalive_status_item._menuitem.setHidden_(keepalive)
+        self._keepalive_next_item._menuitem.setHidden_(keepalive)
+        self._sep_after_keepalive._menuitem.setHidden_(not any_visible)
 
     # ------------------------------------------------------------------
     # Display update
@@ -263,10 +313,25 @@ class CredClaude(rumps.App):
             else:
                 self._extra_usage_item.title = "Extra usage: enabled"
 
+        # ------------------------------------------------------------------
+        # Dropdown: Keepalive status (hidden when disabled)
+        # ------------------------------------------------------------------
+        show_keepalive = bool(self.config.get("keepalive_enabled", True))
+        if show_keepalive:
+            snap = self._keepalive_scheduler.status_snapshot()
+            self._keepalive_status_item.title = fmt_keepalive_status(snap)
+            if snap.scheduled_fire_at is not None:
+                self._keepalive_next_item.title = (
+                    f"  Next: {_fmt_relative(snap.scheduled_fire_at)}"
+                )
+            else:
+                self._keepalive_next_item.title = "  Next: —"
+
         self._set_info_hidden(
             plan=not show_plan,
             weekly=not show_weekly,
             extra=not show_extra,
+            keepalive=not show_keepalive,
         )
 
         # Store for notification checks
@@ -304,9 +369,29 @@ class CredClaude(rumps.App):
             # Snapshot seeded the cache — display it immediately
             self._update()
             logger.info("Startup: using snapshot, next API call in %ds", REFRESH_INTERVAL_SEC)
+        else:
+            # No usable snapshot — fetch from API
+            self._update()
+        self._startup_keepalive_catchup()
+
+    def _startup_keepalive_catchup(self) -> None:
+        """On launch, fire a ping if we missed a scheduled firing while off."""
+        if not self.config.get("keepalive_enabled", True):
             return
-        # No usable snapshot — fetch from API
-        self._update()
+        limit = getattr(self, "_last_limit", None)
+        resets = limit.resets_at if limit is not None else None
+        self._keepalive_scheduler.catch_up_if_needed(resets)
+
+    def _handle_wake(self) -> None:
+        """Wake-from-sleep handler: catch up any missed ping and reschedule."""
+        if not self.config.get("keepalive_enabled", True):
+            return
+        limit = getattr(self, "_last_limit", None)
+        resets = limit.resets_at if limit is not None else None
+        logger.info("System wake detected — re-evaluating keepalive.")
+        self._keepalive_scheduler.handle_wake(resets)
+        # Force a refresh so resets_at doesn't stay stale.
+        self._refresh_now(None)
 
     def _tick(self, _sender) -> None:
         """Poll at the configured interval."""
@@ -402,8 +487,11 @@ class CredClaude(rumps.App):
                 self._tick_timer.stop()
                 logger.info("Auto-refresh OFF")
 
+        self._keepalive_scheduler.set_wake_system_enabled(
+            bool(cfg.get("keepalive_wake_system_enabled", False))
+        )
         last_limit = getattr(self, "_last_limit", None)
-        if not cfg.get("keepalive_enabled", False):
+        if not cfg.get("keepalive_enabled", True):
             self._keepalive_scheduler.cancel()
         elif last_limit is not None and last_limit.resets_at is not None:
             self._keepalive_scheduler.schedule(last_limit.resets_at)
@@ -430,7 +518,7 @@ class CredClaude(rumps.App):
 
     def _maybe_schedule_keepalive(self, limit) -> None:
         """Schedule or cancel the post-reset keepalive ping."""
-        if not self.config.get("keepalive_enabled", False):
+        if not self.config.get("keepalive_enabled", True):
             self._keepalive_scheduler.cancel()
             return
         if limit.resets_at is not None:

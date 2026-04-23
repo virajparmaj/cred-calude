@@ -20,6 +20,7 @@ LOG_PATH = APP_DIR / "monitor.log"
 PROJECTS_DIR = CLAUDE_DIR / "projects"
 NOTIF_LOCK_PATH = APP_DIR / ".last_reset_notif"
 SNAPSHOT_PATH = APP_DIR / "last_usage.json"
+KEEPALIVE_STATE_PATH = APP_DIR / "keepalive_state.json"
 
 # ---------------------------------------------------------------------------
 # Intervals
@@ -41,7 +42,8 @@ DEFAULT_CONFIG: dict = {
     "auto_refresh": True,
     "auto_reauth_enabled": True,
     "auto_reauth_cooldown_sec": 1800,
-    "keepalive_enabled": False,
+    "keepalive_enabled": True,
+    "keepalive_wake_system_enabled": False,
 }
 
 
@@ -88,6 +90,13 @@ def load_config() -> dict:
             if not isinstance(cfg.get("keepalive_enabled"), bool):
                 logger.warning("Invalid keepalive_enabled type, resetting to default")
                 cfg["keepalive_enabled"] = DEFAULT_CONFIG["keepalive_enabled"]
+            if not isinstance(cfg.get("keepalive_wake_system_enabled"), bool):
+                logger.warning(
+                    "Invalid keepalive_wake_system_enabled type, resetting to default"
+                )
+                cfg["keepalive_wake_system_enabled"] = DEFAULT_CONFIG[
+                    "keepalive_wake_system_enabled"
+                ]
             cooldown = cfg.get("auto_reauth_cooldown_sec")
             if not isinstance(cooldown, (int, float)) or cooldown < 30 or cooldown > 86400:
                 logger.warning("Invalid auto_reauth_cooldown_sec '%s', resetting to default",

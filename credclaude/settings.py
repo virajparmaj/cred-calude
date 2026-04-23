@@ -46,10 +46,28 @@ _REPO_DIR = Path(__file__).parent.parent
 _INSTALL_SCRIPT = _REPO_DIR / "install.sh"
 
 _W = 500
-_H = 554
+_H = 598
 _PAD = 24
 _INNER = 18
 _ROW_H = 44
+
+
+def _wake_system_available() -> bool:
+    """Probe whether passwordless `sudo pmset schedule wake` is available.
+
+    Requires the one-time installer (install-wake.sh) to have added a
+    scoped sudoers entry. Times out quickly if sudo would prompt.
+    """
+    try:
+        result = subprocess.run(
+            ["/usr/bin/sudo", "-n", "/usr/bin/pmset", "-g", "sched"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
 
 
 def _label(text: str, x: float, y: float, w: float = 220, h: float = 20,
@@ -381,22 +399,48 @@ class SettingsWindow:
         box.addSubview_(src_lbl)
 
         # =================================================================
-        # MONITORING section  (label y=522, box y=378 h=176)
+        # MONITORING section  (label y=566, box y=378 h=220)
         # =================================================================
-        content.addSubview_(_section_label("Monitoring", _PAD, 522))
-        box = _section_box(378, 176)
+        content.addSubview_(_section_label("Monitoring", _PAD, 566))
+        box = _section_box(378, 220)
         content.addSubview_(box)
 
         auto_refresh_on = self._config.get("auto_refresh", True)
         auto_reauth_on = self._config.get("auto_reauth_enabled", True)
-        keepalive_on = self._config.get("keepalive_enabled", False)
+        keepalive_on = self._config.get("keepalive_enabled", True)
+        wake_system_on = self._config.get("keepalive_wake_system_enabled", False)
+        wake_system_available = _wake_system_available()
 
-        # Row 4 — top: Post-reset keepalive toggle (local y=132..176)
+        # Row 5 — top: Wake Mac from sleep toggle (local y=176..220)
+        wake_lbl = _label("Wake Mac from sleep", _INNER, 188)
+        box.addSubview_(wake_lbl)
+        self._wake_system_switch = NSSwitch.alloc().initWithFrame_(
+            NSMakeRect(box_w - _INNER - 40, 187, 40, 22)
+        )
+        # Only allow "on" if the sudoers entry is present.
+        effective_wake_state = wake_system_on and wake_system_available
+        self._wake_system_switch.setState_(1 if effective_wake_state else 0)
+        self._wake_system_switch.setEnabled_(wake_system_available)
+        if not wake_system_available:
+            wake_lbl.setTextColor_(NSColor.tertiaryLabelColor())
+            tip = "Run install-wake.sh once to enable waking the Mac at reset time."
+            self._wake_system_switch.setToolTip_(tip)
+            wake_lbl.setToolTip_(tip)
+        box.addSubview_(self._wake_system_switch)
+
+        _separator(box, 176)
+
+        # Row 4: Post-reset keepalive toggle (local y=132..176)
         box.addSubview_(_label("Post-reset keepalive", _INNER, 144))
         self._keepalive_switch = NSSwitch.alloc().initWithFrame_(
             NSMakeRect(box_w - _INNER - 40, 143, 40, 22)
         )
         self._keepalive_switch.setState_(1 if keepalive_on else 0)
+        self._keepalive_switch.setToolTip_(
+            "Fires `claude -p ping` ~10s after each 5-hour reset so your next "
+            "window starts promptly. Requires Mac on or sleeping; cannot fire "
+            "when the Mac is shut down."
+        )
         box.addSubview_(self._keepalive_switch)
 
         _separator(box, 132)
@@ -468,7 +512,8 @@ class SettingsWindow:
         )
 
     def _reset_to_defaults(self) -> None:
-        self._keepalive_switch.setState_(0)
+        self._keepalive_switch.setState_(1)
+        self._wake_system_switch.setState_(0)
         self._auto_reauth_switch.setState_(1)
         self._auto_refresh_switch.setState_(1)
         self._current_unit = "sec"
@@ -489,6 +534,7 @@ class SettingsWindow:
         cfg["auto_refresh"] = bool(self._auto_refresh_switch.state())
         cfg["auto_reauth_enabled"] = bool(self._auto_reauth_switch.state())
         cfg["keepalive_enabled"] = bool(self._keepalive_switch.state())
+        cfg["keepalive_wake_system_enabled"] = bool(self._wake_system_switch.state())
 
         # Refresh interval (clamp to valid range, convert units)
         try:
