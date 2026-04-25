@@ -44,6 +44,7 @@ DEFAULT_CONFIG: dict = {
     "auto_reauth_cooldown_sec": 1800,
     "keepalive_enabled": True,
     "keepalive_wake_system_enabled": False,
+    "claude_bin": None,  # None = auto-discover; str = absolute path override
 }
 
 
@@ -102,6 +103,10 @@ def load_config() -> dict:
                 logger.warning("Invalid auto_reauth_cooldown_sec '%s', resetting to default",
                                cooldown)
                 cfg["auto_reauth_cooldown_sec"] = DEFAULT_CONFIG["auto_reauth_cooldown_sec"]
+            claude_bin = cfg.get("claude_bin")
+            if claude_bin is not None and (not isinstance(claude_bin, str) or not claude_bin.strip()):
+                logger.warning("Invalid claude_bin '%s', resetting to default", claude_bin)
+                cfg["claude_bin"] = DEFAULT_CONFIG["claude_bin"]
             return cfg
         except Exception as e:
             logger.warning("Failed to load config, using defaults: %s", e)

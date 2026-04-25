@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import datetime
 import logging
+import os
 import shutil
 import subprocess
 import threading
@@ -24,6 +25,22 @@ _DEFAULT_CATCH_UP_WINDOW_SEC = 7200  # 2 hours
 _WAKE_DEBOUNCE_SEC = 5
 _PMSET_PATH = "/usr/bin/pmset"
 _SUDO_PATH = "/usr/bin/sudo"
+
+
+def _fallback_path_dirs() -> list[str]:
+    """Common install locations for the `claude` CLI on macOS.
+
+    GUI-launched apps inherit a minimal PATH that excludes per-user dirs like
+    ``~/.local/bin``, so we probe these explicitly when ``shutil.which`` fails.
+    """
+    home = Path.home()
+    return [
+        str(home / ".local" / "bin"),
+        str(home / ".npm-global" / "bin"),
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
+        str(home / ".volta" / "bin"),
+    ]
 
 
 class KeepaliveScheduler:
@@ -46,6 +63,7 @@ class KeepaliveScheduler:
         self._last_wake_at: datetime.datetime | None = None
         self._wake_system_enabled = False
         self._last_wake_scheduled: datetime.datetime | None = None
+        self._claude_bin: str | None = None
 
     # ------------------------------------------------------------------
     # Configuration
@@ -53,6 +71,18 @@ class KeepaliveScheduler:
     def set_wake_system_enabled(self, enabled: bool) -> None:
         """Enable/disable pmset system-wake scheduling (Tier 2)."""
         self._wake_system_enabled = bool(enabled)
+
+    def set_claude_bin(self, claude_bin: str | None) -> None:
+        """Configure an explicit absolute path to the `claude` binary.
+
+        ``None`` (default) falls back to auto-discovery via PATH and common
+        per-user install dirs. Set this when the binary lives in a location
+        the GUI-app PATH doesn't include.
+        """
+        if claude_bin is None or not str(claude_bin).strip():
+            self._claude_bin = None
+        else:
+            self._claude_bin = str(claude_bin).strip()
 
     # ------------------------------------------------------------------
     # Scheduling
@@ -188,10 +218,15 @@ class KeepaliveScheduler:
 
     def _fire_ping(self) -> bool:
         """Send a lightweight Claude prompt to start the next window promptly."""
-        claude_path = shutil.which("claude")
         now = datetime.datetime.now().astimezone()
+        claude_path = self._resolve_claude_binary()
         if not claude_path:
-            logger.warning("Keepalive ping skipped: `claude` was not found in PATH.")
+            searched = os.pathsep.join(self._search_paths())
+            logger.warning(
+                "Keepalive ping skipped: `claude` not found. Searched: %s. "
+                "Set `claude_bin` in config to override.",
+                searched,
+            )
             self._persist_status(now, "failed")
             return False
 
@@ -227,6 +262,39 @@ class KeepaliveScheduler:
         logger.info("Keepalive ping sent successfully.")
         self._persist_status(now, "ok")
         return True
+
+    # ------------------------------------------------------------------
+    # Internal: claude binary resolution
+    # ------------------------------------------------------------------
+    def _search_paths(self) -> list[str]:
+        """Augmented PATH used when bare ``shutil.which`` fails."""
+        env_path = os.environ.get("PATH", "")
+        dirs = list(_fallback_path_dirs())
+        if env_path:
+            dirs.append(env_path)
+        return dirs
+
+    def _resolve_claude_binary(self) -> str | None:
+        """Locate the ``claude`` CLI, tolerant of GUI-app minimal PATH.
+
+        Resolution order: explicit config override → ``$CLAUDE_BIN`` env →
+        ``shutil.which`` against current PATH → ``shutil.which`` against an
+        augmented PATH covering common per-user install dirs.
+        """
+        override = self._claude_bin
+        if override and os.path.isfile(override) and os.access(override, os.X_OK):
+            return override
+
+        env_override = os.environ.get("CLAUDE_BIN")
+        if env_override and os.path.isfile(env_override) and os.access(env_override, os.X_OK):
+            return env_override
+
+        found = shutil.which("claude")
+        if found:
+            return found
+
+        augmented = os.pathsep.join(self._search_paths())
+        return shutil.which("claude", path=augmented)
 
     # ------------------------------------------------------------------
     # Internal: state persistence helpers

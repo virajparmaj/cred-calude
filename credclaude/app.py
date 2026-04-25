@@ -112,6 +112,7 @@ class CredClaude(rumps.App):
         self._keepalive_scheduler.set_wake_system_enabled(
             bool(self.config.get("keepalive_wake_system_enabled", False))
         )
+        self._keepalive_scheduler.set_claude_bin(self.config.get("claude_bin"))
 
         # Limit provider (Official OAuth API + Estimator fallback)
         self._provider = CompositeLimitProvider(self.config)
@@ -490,6 +491,7 @@ class CredClaude(rumps.App):
         self._keepalive_scheduler.set_wake_system_enabled(
             bool(cfg.get("keepalive_wake_system_enabled", False))
         )
+        self._keepalive_scheduler.set_claude_bin(cfg.get("claude_bin"))
         last_limit = getattr(self, "_last_limit", None)
         if not cfg.get("keepalive_enabled", True):
             self._keepalive_scheduler.cancel()

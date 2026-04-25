@@ -221,6 +221,81 @@ class TestKeepaliveSchedulerFirePing:
         assert state.last_fired_at is not None
 
 
+class TestResolveClaudeBinary:
+    def test_config_override_used_when_executable(self, tmp_path, monkeypatch):
+        scheduler = KeepaliveScheduler()
+        binary = tmp_path / "claude-custom"
+        binary.write_text("#!/bin/sh\nexit 0\n")
+        binary.chmod(0o755)
+
+        scheduler.set_claude_bin(str(binary))
+        monkeypatch.delenv("CLAUDE_BIN", raising=False)
+
+        with patch("shutil.which", return_value="/should/not/be/used"):
+            assert scheduler._resolve_claude_binary() == str(binary)
+
+    def test_config_override_ignored_when_missing(self, tmp_path, monkeypatch):
+        scheduler = KeepaliveScheduler()
+        scheduler.set_claude_bin(str(tmp_path / "does-not-exist"))
+        monkeypatch.delenv("CLAUDE_BIN", raising=False)
+
+        with patch("shutil.which", return_value="/usr/local/bin/claude"):
+            assert scheduler._resolve_claude_binary() == "/usr/local/bin/claude"
+
+    def test_env_override_used_when_executable(self, tmp_path, monkeypatch):
+        scheduler = KeepaliveScheduler()
+        binary = tmp_path / "claude-env"
+        binary.write_text("#!/bin/sh\nexit 0\n")
+        binary.chmod(0o755)
+        monkeypatch.setenv("CLAUDE_BIN", str(binary))
+
+        with patch("shutil.which", return_value="/should/not/be/used"):
+            assert scheduler._resolve_claude_binary() == str(binary)
+
+    def test_falls_through_to_shutil_which(self, monkeypatch):
+        scheduler = KeepaliveScheduler()
+        monkeypatch.delenv("CLAUDE_BIN", raising=False)
+
+        with patch("shutil.which", return_value="/opt/homebrew/bin/claude"):
+            assert scheduler._resolve_claude_binary() == "/opt/homebrew/bin/claude"
+
+    def test_falls_back_to_augmented_path(self, tmp_path, monkeypatch):
+        scheduler = KeepaliveScheduler()
+        monkeypatch.delenv("CLAUDE_BIN", raising=False)
+        monkeypatch.setattr(
+            keepalive_mod, "_fallback_path_dirs", lambda: [str(tmp_path)]
+        )
+
+        binary = tmp_path / "claude"
+        binary.write_text("#!/bin/sh\nexit 0\n")
+        binary.chmod(0o755)
+
+        which_calls: list[tuple] = []
+        real_which = keepalive_mod.shutil.which
+
+        def fake_which(cmd, path=None):
+            which_calls.append((cmd, path))
+            if path is None:
+                return None
+            return real_which(cmd, path=path)
+
+        with patch.object(keepalive_mod.shutil, "which", side_effect=fake_which):
+            resolved = scheduler._resolve_claude_binary()
+
+        assert resolved == str(binary)
+        assert which_calls[0] == ("claude", None)
+        assert which_calls[1][0] == "claude"
+        assert str(tmp_path) in which_calls[1][1]
+
+    def test_returns_none_when_nothing_found(self, monkeypatch):
+        scheduler = KeepaliveScheduler()
+        monkeypatch.delenv("CLAUDE_BIN", raising=False)
+        monkeypatch.setattr(keepalive_mod, "_fallback_path_dirs", lambda: [])
+
+        with patch("shutil.which", return_value=None):
+            assert scheduler._resolve_claude_binary() is None
+
+
 class TestCatchUpIfNeeded:
     def test_no_scheduled_time_is_noop(self, frozen_now, state_path, sync_threads):
         scheduler = KeepaliveScheduler(state_path=state_path)
